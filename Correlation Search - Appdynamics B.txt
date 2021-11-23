@@ -1,4 +1,4 @@
-index="appdynamic" source=healthrulev* NOT (appName="*test*" OR appName="*preprod*" OR appName="32595" OR appName="32596") earliest=-30m@m latest=-8m@m
+index=kapil"appdynamic" source=healthrulev* NOT (appName="*test*" OR appName="*preprod*" OR appName="32595" OR appName="32596") earliest=-30m@m latest=-8m@m
 |eval startTimeInMillis = startTimeInMillis/1000
 |addinfo 
 |where startTimeInMillis > info_min_time
