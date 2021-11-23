@@ -1,0 +1,48 @@
+index="appdynamic" source=healthrulev* NOT (appName="*test*" OR appName="*preprod*" OR appName="32595" OR appName="32596") 
+|eval startTimeInMillis = startTimeInMillis/1000
+|addinfo 
+|where startTimeInMillis > info_min_time
+| search incidentStatus = "OPEN"
+|dedup id
+|rename affectedEntityDefinition.name as HostName
+`suppression_others`
+|where suppression < 1
+|table _time appName HostName name description severity _raw
+|eval name2 = name
+|eval name = split(name,":")
+|eval HealthRule = case(appName="22504",coalesce(trim(mvindex(name,1)),name2),appName="22502",coalesce(trim(mvindex(name,2)),name2),1=1,name2)
+|eval AppName = case(appName="22502" OR appName="22504",trim(mvindex(name,0)),1=1,appName)
+|eval HostName = if(appName="22502",mvindex(name,1),HostName)
+|rex mode=sed field=description "s/\<[\w|\/]+\>/\n/g"
+|table _time appName AppName HostName HealthRule description severity _raw
+|search NOT HealthRule IN ("Memory Usage is too high","CPU Usage is too high","Overall Disk Space Available is too low","Disk Usage is too high on at least one partition","Swap Usage is too high")
+|eval HealthRule_2 = upper(HealthRule)
+|eval AppName = if(HealthRule_2="APPDYNAMICS MACHINE AGENT IS DOWN","Agent Down",AppName)
+`appd_get_as_grp_original`
+|lookup appdHealthRule AppName HealthRule OUTPUT
+|rex field=AppName mode=sed "s/-Prod//g"
+|eval AppName = case(AppName="GMES-CSU","GMES CSU",AppName="GMES-NOR","GMES NOR",AppName="MOVEIT-Printing","MOVEIT Printing",AppName="MoveIT-Logistics","MOVEIT Logistics",AppName="SellIT-UP2","SAPCIUP2-UP2-ERP",1=1,AppName)
+|eval Application = AppName
+`suppression_application`
+|where suppression < 1
+|eval EntityType=if(appName="22502" OR appName="22504","Infrastructure","Application")
+|eval EntityType=if(HealthRule_2="APPDYNAMICS MACHINE AGENT IS DOWN","Infrastructure",EntityType)
+|search EntityType=*
+|eval HostName = lower(HostName)
+|rename HostName as host
+|join type=left host [search index=nimsoft Tag!="Clear" earliest=-30m@m latest=now (Alarm=*inactive* AND Alarm=Robot*)
+`get_as_grp` `get_LKUID` `get_LAAID`
+|eval lc_correlationid=if(like(Assignment_Group,"%HCL Tools - ITPAM%") OR like(host,"PSpecVm") OR like(KPI,"Availability") OR like(host,"PSpecSim") OR like(soilogic,"True"),HUID,if(host=="PSpecCtrlm",OrderId,if((like(Alarm,"%drive%") OR like(KPI,"Fault") OR like(KPI,"Performance")) AND (host!="PSpecCtrlm"),LAAID,HUID)))
+|stats values(Alarm) as InfraAlarm,values(Assignment_Group) as ASG,latest(lc_correlationid) as CORID by HostName
+|rename HostName as host
+|eval Match = "True"|eval host = lower(host)]
+|eval cor_id = md5(Application+host+HealthRule)
+|eval sn_corid = case(EntityType="Application",cor_id,EntityType="Infrastructure",if(Alarm!="" AND HealthRule_2="APPDYNAMICS MACHINE AGENT IS DOWN",CORID,md5(Application+host+HealthRule)))
+|eval short_description = "AppD-"+severity."-"+Application."-"+host."-"+HealthRule
+|eval AffectedCI = if(EntityType="Application",AppName,host)
+|eval AffectedCI = if(like(AffectedCI,"%-java-ma"),"AppDynamics",AffectedCI)
+|lookup cmdb_ci_list HostName as AffectedCI OUTPUT Support_Group as AssignmentGroup
+|eval AssignmentGroup = coalesce(assignment_group,AssignmentGroup)
+| eval AffectedCI=trim(AffectedCI)
+| eval AffectedCI = case(like(AffectedCI,"%22503") AND like(short_description,"%RP1%"),"SAP RP1",like(AffectedCI,"%22503") AND like(short_description,"%G1F%"),"SAP G1 RCP - GlobalOne",like(AffectedCI,"%22503") AND like(short_description,"%UP2%"),"SAP SELLIT",like(AffectedCI,"%22503") AND like(short_description,"%WP1%"),"SAP PlyERP",1=1,AffectedCI)
+|table _time EntityType AffectedCI sn_corid short_description description HealthRule AssignmentGroup severity Application host
